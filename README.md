@@ -34,7 +34,7 @@ Follow these three steps:
 First, clone this repository to your local machine.
 
 ```bash
-git clone https://github.com/hsgweon/AMRScan.git
+git clone https://github.com/hsgweon/amrscan.git
 cd amrscan
 ```
 
