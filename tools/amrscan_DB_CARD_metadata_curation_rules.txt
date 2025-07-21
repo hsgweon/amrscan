@@ -1,0 +1,3 @@
+# ARO_Name_Contains {tab} AMR_Gene_Family_New_Name
+OXA	OXA beta-lactamase
+NDM	NDM beta-lactamase

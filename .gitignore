@@ -1,0 +1,15 @@
+# Python cache files
+__pycache__/
+*.pyc
+
+# Test runs and output files
+*.log
+*.html
+
+# Conda environment directory
+amrscan-env/
+
+# Distribution / packaging files
+dist/
+build/
+*.egg-info/

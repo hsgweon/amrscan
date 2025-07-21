@@ -1,0 +1,14 @@
+name: amrscan-env
+channels:
+  - defaults
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.8
+  - pip
+  - bwa
+  - diamond
+  - samtools
+
+  - pip:
+    - .
