@@ -1,0 +1,3 @@
+query_id	ARO_matched	mutation	nucleotide_pid	alignment_length	position_on_ref
+Query8__R__A1401G___1270-1419___resistant_1	ARO_3003504__Bbur_16S_GEN__R__a1401g	a1401g	99.33	150	1270
+Query11__R__C1185T___1096-1245___resistant_1	ARO_3003502__Bbur_16S_SPT__R__c1185t	c1185t	100.00	150	1096

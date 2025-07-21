@@ -1,0 +1,12 @@
+AMRscan Pipeline Run Details
+------------------------------
+Pipeline Version: 1.0.0
+Date and Time: 2025-07-21 15:02:11
+Command-line: /data-ext4/xc917132/applications/miniconda3/envs/amrscan-env/bin/amrscan -i test.fastq.gz -o test -t 2
+
+--- System & Tool Information ---
+Python Version: 3.13.5
+BWA Version: 0.7.19-r1273
+Diamond Version: 2.1.12
+pip Version: 25.1.1
+setuptools Version: Not Found

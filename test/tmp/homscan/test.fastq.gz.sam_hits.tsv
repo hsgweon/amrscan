@@ -1,0 +1,4 @@
+ARO_matched	query_id	nucleotide_pid	nucleotide_mismatches	nucleotide_denominator	protein_pid	protein_mismatches	protein_denominator	position_on_ref	read_length	target_length	uniqueness
+ARO_3002999__CblA-1__H	Query1__H__resistant_1_1	100.00	0	150	100.00	0	49	47	150	891	UNIQUE
+ARO_3002999__CblA-1__H	Query2__H__resistant_2_1	100.00	0	150	100.00	0	49	47	150	891	UNIQUE
+ARO_3002999__CblA-1__H	Query3__H__resistant_3_1	100.00	0	150	100.00	0	49	215	150	891	UNIQUE
