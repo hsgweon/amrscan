@@ -102,7 +102,7 @@ amrscan -i <INPUT_FILES> -o <OUTPUT_PREFIX> [OPTIONS]
 #### **Performance**
 | Flag | Description | Default |
 | :--- | :--- | :--- |
-| `-t`, `--threads` | Number of threads to use for computationally intensive steps. | `8` |
+| `-t`, `--threads` | Number of threads to use for computationally intensive steps. | `1` |
 
 #### **Workflow Control**
 | Flag | Description |
