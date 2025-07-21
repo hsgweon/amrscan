@@ -12,15 +12,15 @@ import re
 import shutil
 import glob
 
-import pkg_resources
-
 try:
     import importlib.metadata
+    from importlib import resources
 except ImportError:
-    pass
+    import pkg_resources
 
 __version__ = "1.0.0"
 
+# ANSI escape codes for colors
 class Colors:
     HEADER = '\033[95m'
     BLUE = '\033[94m'
@@ -168,10 +168,16 @@ def format_duration(seconds):
 def get_data_path(filename):
     """
     Finds the absolute path to a data file packaged with the installation.
-    pkg_resources is the most reliable method for handling nested data files
-    across different Python versions (including 3.8).
+    This is now compatible with Python 3.8, 3.9, and newer.
     """
-    return pkg_resources.resource_filename('amrscan', filename)
+    try:
+        if sys.version_info < (3, 9):
+            raise ImportError("Use pkg_resources for older Python versions")
+        
+        with resources.as_file(resources.files('amrscan').joinpath(filename)) as path:
+            return path
+    except (ImportError, AttributeError):
+        return pkg_resources.resource_filename('amrscan', filename)
 
 def main():
     start_time = time.monotonic()
