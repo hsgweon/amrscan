@@ -60,9 +60,7 @@ You are now ready to run the pipeline! The `amrscan` command will be available i
 To test your installation and run a basic analysis on paired-end reads using the default packaged databases and 16 threads, use the following command:
 
 ```bash
-amrscan -i /path/to/your/reads_R1.fastq.gz,/path/to/your/reads_R2.fastq.gz \
-        -o my_first_run \
-        -t 16
+amrscan -i test.fastq.gz -o test -t 2
 ```
 This will create a directory named `my_first_run` containing all the results.
 
