@@ -197,10 +197,10 @@ def main():
     parser.add_argument("--db-card-metadata", default=None, help="Path to a custom CARD metadata file (overrides packaged DB).")
     
     # --- Performance & Filtering Arguments ---
-    parser.add_argument("-t", "--threads", type=int, default=8, help="Number of threads to use (default: 8).")
-    parser.add_argument("--homscan-pid-cutoff", type=float, default=0.9, help="Minimum percent identity for HOMSCAN hits (0.0-1.0 scale). Default: 0.9")
-    parser.add_argument("--varscan-pid-cutoff", type=float, default=0.9, help="Minimum nucleotide percent identity for VARSCAN hits (0.0-1.0 scale). Default: 0.9")
-    parser.add_argument("--consensus-cutoff", type=float, default=0.9, help="Consensus cutoff for homscan family assignment. Default: 0.9")
+    parser.add_argument("-t", "--threads", type=int, default=1, help="Number of threads to use (default: 1).")
+    parser.add_argument("--homscan-pid-cutoff", type=float, default=0.95, help="Minimum percent identity for HOMSCAN hits (0.0-1.0 scale). Default: 0.95")
+    parser.add_argument("--varscan-pid-cutoff", type=float, default=0.95, help="Minimum nucleotide percent identity for VARSCAN hits (0.0-1.0 scale). Default: 0.95")
+    parser.add_argument("--consensus-cutoff", type=float, default=0.8, help="Consensus cutoff for homscan family assignment. Default: 0.8")
     
     # --- Gene Type & PID Type Arguments ---
     parser.add_argument("--homscan-gene-types", default='H', help="Comma-delimited list of gene types for homscan (e.g., 'H,K'). Default: 'H'")

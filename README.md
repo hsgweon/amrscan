@@ -92,10 +92,10 @@ amrscan -i <INPUT_FILES> -o <OUTPUT_PREFIX> [OPTIONS]
 #### **Analysis Parameters**
 | Flag | Description | Default |
 | :--- | :--- | :--- |
-| `--homscan-pid-cutoff` | Minimum percent identity for HomScan hits (0.0-1.0 scale). | `0.9` |
-| `--varscan-pid-cutoff` | Minimum nucleotide percent identity for VarScan hits (0.0-1.0 scale). | `0.9` |
+| `--homscan-pid-cutoff` | Minimum percent identity for HomScan hits (0.0-1.0 scale). | `0.95` |
+| `--varscan-pid-cutoff` | Minimum nucleotide percent identity for VarScan hits (0.0-1.0 scale). | `0.95` |
 | `--homscan-pid-type` | PID type to use for HomScan filtering and WTA (`protein` or `nucleotide`). | `protein` |
-| `--consensus-cutoff` | Minimum fraction of ambiguous hits that must map to the same gene family to reach a consensus. | `0.9` |
+| `--consensus-cutoff` | Minimum fraction of ambiguous hits that must map to the same gene family to reach a consensus. | `0.8` |
 | `--homscan-gene-types` | Comma-separated list of gene types for HomScan (e.g., 'H,K'). | `H` |
 | `--varscan-gene-types` | Comma-separated list of variant types for VarScan (e.g., 'V,R,O'). | `V,R` |
 
