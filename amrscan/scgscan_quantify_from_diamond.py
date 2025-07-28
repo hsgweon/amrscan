@@ -3,7 +3,8 @@
 import argparse
 import os
 import sys
-from collections import Counter
+import re
+from collections import Counter, defaultdict
 
 class BColors:
     """A helper class to add color to terminal output."""
@@ -53,10 +54,12 @@ def load_gene_lengths(filepath):
 
 def process_diamond_file(diamond_path, evalue_cutoff):
     """
-    Processes a DIAMOND tabular output file to count hits per reference gene.
+    Processes a DIAMOND tabular output file to count hits per reference gene,
+    distinguishing between total reads and unique fragments.
     """
     print(BColors.cyan(f"--- Processing DIAMOND file: {diamond_path} ---"))
-    counts = Counter()
+    read_counts = Counter()
+    fragments_per_gene = defaultdict(set)
     total_alignments = 0
     passing_alignments = 0
     
@@ -67,53 +70,63 @@ def process_diamond_file(diamond_path, evalue_cutoff):
                 fields = line.strip().split('\t')
                 
                 if len(fields) >= 12:
+                    read_id = fields[0]
                     full_gene_id = fields[1]
                     evalue = float(fields[10])
                     
                     if evalue <= evalue_cutoff:
-                        # <<< THIS IS THE FIX: Extract the base gene name >>>
-                        # Splits 'rpoB___409' into 'rpoB' and '409', takes the first part.
                         base_gene_id = full_gene_id.split('___')[0]
                         
-                        counts[base_gene_id] += 1
+                        # Count every passing read
+                        read_counts[base_gene_id] += 1
+                        
+                        # Derive fragment ID and add to a set to count unique fragments
+                        fragment_id = re.sub(r'[/_][12]$', '', read_id)
+                        fragments_per_gene[base_gene_id].add(fragment_id)
+                        
                         passing_alignments += 1
 
     except FileNotFoundError:
         print(BColors.red(f"Error: DIAMOND file not found at '{diamond_path}'"), file=sys.stderr)
-        return None, 0, 0
+        return None, None, 0, 0
     
-    print(BColors.green(f"--- Processed {total_alignments} alignments. Found {passing_alignments} hits passing E-value cutoff for {len(counts)} unique genes."))
-    return counts, total_alignments, passing_alignments
+    print(BColors.green(f"--- Processed {total_alignments} alignments. Found {passing_alignments} passing hits for {len(read_counts)} unique genes."))
+    return read_counts, fragments_per_gene, total_alignments, passing_alignments
 
-def write_report(output_path, uscg_counts, uscg_lengths, total_alignments):
-    """Calculates metrics and writes the final summary report."""
+def write_report(output_path, uscg_read_counts, uscg_fragment_sets, uscg_lengths, total_alignments):
+    """Calculates RPK and FPK metrics and writes the final summary report."""
     print(BColors.cyan(f"--- Calculating metrics and writing report to: {output_path} ---"))
     
-    total_mapped_frags = sum(uscg_counts.values())
+    total_mapped_reads = sum(uscg_read_counts.values())
+    total_mapped_fragments = sum(len(s) for s in uscg_fragment_sets.values())
     total_ref_len = sum(uscg_lengths.values())
-    uscg_rpks = {}
 
-    for gene, length in uscg_lengths.items():
-        count = uscg_counts.get(gene, 0)
-        uscg_rpks[gene] = (count / (length / 1000.0)) if length > 0 else 0.0
-
-    overall_rpk = (total_mapped_frags / (total_ref_len / 1000.0)) if total_ref_len > 0 else 0.0
+    # Calculate overall RPK and FPK for all SCGs combined
+    overall_rpk = (total_mapped_reads / (total_ref_len / 1000.0)) if total_ref_len > 0 else 0.0
+    overall_fpk = (total_mapped_fragments / (total_ref_len / 1000.0)) if total_ref_len > 0 else 0.0
 
     try:
         with open(output_path, 'w') as f:
             f.write("### USCG Quantification Summary ###\n")
-            f.write("USCG_ID\tMapped_Fragment_Count\tRPK\n")
+            f.write("USCG_ID\tMapped_Read_Count\tMapped_Fragment_Count\tRPK\tFPK\n")
             
             for gene_id in sorted(uscg_lengths.keys()):
-                count = uscg_counts.get(gene_id, 0)
-                rpk = uscg_rpks.get(gene_id, 0.0)
-                f.write(f"{gene_id}\t{count}\t{rpk:.4f}\n")
+                length = uscg_lengths[gene_id]
+                read_count = uscg_read_counts.get(gene_id, 0)
+                fragment_count = len(uscg_fragment_sets.get(gene_id, set()))
+                
+                rpk = (read_count / (length / 1000.0)) if length > 0 else 0.0
+                fpk = (fragment_count / (length / 1000.0)) if length > 0 else 0.0
+                
+                f.write(f"{gene_id}\t{read_count}\t{fragment_count}\t{rpk:.4f}\t{fpk:.4f}\n")
 
             f.write("\n### Overall Sample Statistics ###\n")
             f.write(f"Total_Alignments_In_DIAMOND_File\t{total_alignments}\n")
-            f.write(f"Total_Fragments_Mapped_To_Any_USCG_Passing_Filters\t{total_mapped_frags}\n")
+            f.write(f"Total_Reads_Mapped_To_Any_USCG_Passing_Filters\t{total_mapped_reads}\n")
+            f.write(f"Total_Fragments_Mapped_To_Any_USCG_Passing_Filters\t{total_mapped_fragments}\n")
             f.write(f"Total_Reference_USCG_Length_AA_Combined\t{total_ref_len}\n")
             f.write(f"Overall_RPK_Across_All_USCGs\t{overall_rpk:.4f}\n")
+            f.write(f"Overall_FPK_Across_All_USCGs\t{overall_fpk:.4f}\n")
         
         print(BColors.green("--- Successfully wrote report."))
     except IOError as e:
@@ -155,18 +168,22 @@ def main():
         print(BColors.red("Error: No input DIAMOND files provided."), file=sys.stderr)
         sys.exit(1)
 
-    aggregated_counts = Counter()
+    aggregated_read_counts = Counter()
+    aggregated_fragment_sets = defaultdict(set)
     total_alignments_processed = 0
 
     for diamond_file in diamond_files_list:
-        counts, alignments_in_file, _ = process_diamond_file(diamond_file, args.evalue)
-        if counts is None:
+        read_counts, fragments_per_gene, alignments_in_file, _ = process_diamond_file(diamond_file, args.evalue)
+        if read_counts is None:
             continue
         
-        aggregated_counts.update(counts)
+        aggregated_read_counts.update(read_counts)
+        for gene, frag_set in fragments_per_gene.items():
+            aggregated_fragment_sets[gene].update(frag_set)
+            
         total_alignments_processed += alignments_in_file
 
-    write_report(args.output_report, aggregated_counts, uscg_lengths, total_alignments_processed)
+    write_report(args.output_report, aggregated_read_counts, aggregated_fragment_sets, uscg_lengths, total_alignments_processed)
     
     print(BColors.green("\n\n--- USCG Quantification from DIAMOND Complete ---"))
 

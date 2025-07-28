@@ -1,2 +1,2 @@
-#AMR_Gene_Family;ARO	Count	Lateral_Coverage_%	Gene_Length_bp	RPK	RPKG	RPKPC	RPKPMC
-CblA beta-lactamase;ARO_3002999__CblA-1__H	3	33.67	891	3.3670	3741114.8522	NA	NA
+#AMR_Gene_Family;ARO	Read_Count	Fragment_Count	Lateral_Coverage_%	Gene_Length_bp	RPK	FPK	RPKG	FPKG	RPKPC	FPKPC	RPKPMC	FPKPMC
+CblA beta-lactamase;ARO_3002999__CblA-1__H	3	3	33.67	891	3.3670	3.3670	3741114.8522	3741114.8522	NA	NA	NA	NA

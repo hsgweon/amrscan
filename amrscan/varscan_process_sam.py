@@ -354,13 +354,12 @@ def process_sam_files_for_variants(sam_files, db_sequences, mutation_db, output_
                     if rname == '*':
                         continue
 
-                    # <<< MODIFIED: Filter by gene type early >>>
                     mutation_info = mutation_db.get(rname)
                     if not mutation_info:
-                        continue # Not a variant ARO we are tracking
+                        continue
                     
                     if mutation_info['type'] not in allowed_variant_types:
-                        continue # Not a variant type the user wants to process
+                        continue
 
                     original_qname = fields[0]
                     suffixed_qname = f"{original_qname}_{file_idx + 1}"
@@ -495,7 +494,6 @@ def main():
         action="store_true",
         help="If specified, only count reads that align across their full length, allowing for clips only at the ends of a reference gene."
     )
-    # <<< MODIFIED: Added gene-types argument >>>
     parser.add_argument(
         "--gene-types",
         default='V,R',
@@ -517,7 +515,6 @@ def main():
     db_sequences = parse_fasta_db(args.db) 
     mutation_db = parse_mutation_info_from_db(db_sequences)
 
-    # <<< MODIFIED: Process the gene-types argument >>>
     allowed_variant_types = {t.strip().upper() for t in args.gene_types.split(',') if t.strip()}
     print(BColors.cyan(f"--- Processing variant types: {', '.join(sorted(list(allowed_variant_types)))} ---"))
 
@@ -525,7 +522,6 @@ def main():
     debug_output_path = os.path.join(args.tmp_dir, f"{args.output_prefix}_variant_debug.tsv")
     alignment_output_path = os.path.join(args.tmp_dir, f"{args.output_prefix}_variant_alignments.txt")
 
-    # <<< MODIFIED: Pass the allowed_variant_types set to the processing function >>>
     process_sam_files_for_variants(
         input_files_list, db_sequences, mutation_db, 
         output_path, args.debug, debug_output_path, alignment_output_path,

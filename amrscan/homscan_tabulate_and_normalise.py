@@ -47,22 +47,31 @@ def load_metadata(metadata_path):
     print(BColors.green(f"--- Loaded metadata for {len(aro_to_family)} AROs."))
     return aro_to_family, aro_to_length
 
-def load_uscg_rpk(uscg_report_path):
-    """Loads the Overall_RPK_Across_All_USCGs value from the USCG report."""
-    print(BColors.cyan(f"--- Loading USCG RPK from: {uscg_report_path} ---"))
+def load_uscg_metrics(uscg_report_path):
+    """Loads the Overall RPK and FPK values from the USCG report."""
+    print(BColors.cyan(f"--- Loading USCG metrics from: {uscg_report_path} ---"))
     if not os.path.exists(uscg_report_path):
         print(BColors.red(f"Error: USCG report file not found at '{uscg_report_path}'"), file=sys.stderr)
-        return None
+        return None, None
+        
+    uscg_rpk, uscg_fpk = None, None
     try:
         with open(uscg_report_path, 'r') as f:
             for line in f:
                 if line.startswith("Overall_RPK_Across_All_USCGs"):
-                    return float(line.strip().split('\t')[1])
+                    uscg_rpk = float(line.strip().split('\t')[1])
+                elif line.startswith("Overall_FPK_Across_All_USCGs"):
+                    uscg_fpk = float(line.strip().split('\t')[1])
     except (IOError, ValueError, IndexError) as e:
         print(BColors.red(f"Error reading or parsing USCG report file: {e}"), file=sys.stderr)
-        return None
-    print(BColors.red("Error: 'Overall_RPK_Across_All_USCGs' not found in the USCG report."), file=sys.stderr)
-    return None
+        return None, None
+    
+    if uscg_rpk is None:
+        print(BColors.yellow("Warning: 'Overall_RPK_Across_All_USCGs' not found in the USCG report."), file=sys.stderr)
+    if uscg_fpk is None:
+        print(BColors.yellow("Warning: 'Overall_FPK_Across_All_USCGs' not found in the USCG report. FPK-based normalization will be skipped."), file=sys.stderr)
+        
+    return uscg_rpk, uscg_fpk
 
 def load_total_bases(filepath):
     """Loads the total base count from a file."""
@@ -156,33 +165,34 @@ def calculate_coverage_for_hit_group(list_of_hits, aro_to_length):
 
     return sum(coverages) / len(coverages) if coverages else 0.0
 
-def calculate_normalised_metrics(hits_by_final_category, aro_to_length, uscg_rpk, total_bases):
-    """Calculates all metrics for each detailed AMR entry, including CORRECT lateral coverage."""
+def calculate_normalised_metrics(hits_by_final_category, aro_to_length, uscg_rpk, uscg_fpk, total_bases):
+    """Calculates all metrics for each detailed AMR entry, including read and fragment counts."""
     print(BColors.cyan("--- Calculating metrics for detailed report... ---"))
     results = []
     total_bases_in_gb = (total_bases / 1e9) if total_bases > 0 else 0
     
     for category_key, list_of_hits in hits_by_final_category.items():
         family, aro = category_key
-        count = len(set(h['query_id'] for h in list_of_hits))
+        
+        all_read_ids = [h['query_id'] for h in list_of_hits]
+        read_count = len(set(all_read_ids))
+        
+        fragment_ids = {re.sub(r'_\d+$', '', r_id) for r_id in all_read_ids}
+        fragment_count = len(fragment_ids)
         
         coverage = calculate_coverage_for_hit_group(list_of_hits, aro_to_length)
         
         gene_length_bp = 0
-        if aro.startswith("multiple["):
-            try:
-                id_parts = re.findall(r'\[(.*?)]', aro)[0].split('|')
-                aros_in_multiple = [part.split(';')[-1] for part in id_parts]
-                lengths = [aro_to_length.get(a, 0) for a in aros_in_multiple]
-                valid_lengths = [l for l in lengths if l > 0]
-                if valid_lengths:
-                    gene_length_bp = sum(valid_lengths) / len(valid_lengths)
-            except IndexError:
-                gene_length_bp = 0
+        if aro.startswith("multiple[") or aro == "multiple":
+            all_aros_in_group = {h['ARO_matched'] for h in list_of_hits}
+            lengths = [aro_to_length.get(a, 0) for a in all_aros_in_group]
+            valid_lengths = [l for l in lengths if l > 0]
+            if valid_lengths:
+                gene_length_bp = sum(valid_lengths) / len(valid_lengths)
         else:
             gene_length_bp = aro_to_length.get(aro, 0)
 
-        rpk = (count / (gene_length_bp / 1000.0)) if gene_length_bp > 0 else 0.0
+        rpk = (read_count / (gene_length_bp / 1000.0)) if gene_length_bp > 0 else 0.0
         rpkg = (rpk / total_bases_in_gb) if total_bases_in_gb > 0 else 0.0
         rpkpc_val, rpkpmc_val = "NA", "NA"
         if uscg_rpk is not None and uscg_rpk > 1e-9:
@@ -193,11 +203,26 @@ def calculate_normalised_metrics(hits_by_final_category, aro_to_length, uscg_rpk
         elif uscg_rpk is not None and rpk == 0.0:
             rpkpc_val, rpkpmc_val = "0.0000", "0.00"
 
+        fpk = (fragment_count / (gene_length_bp / 1000.0)) if gene_length_bp > 0 else 0.0
+        fpkg = (fpk / total_bases_in_gb) if total_bases_in_gb > 0 else 0.0
+        fpkpc_val, fpkpmc_val = "NA", "NA"
+
+        if uscg_fpk is not None and uscg_fpk > 1e-9:
+            fpkpc = fpk / uscg_fpk
+            fpkpmc = fpkpc * 1_000_000
+            fpkpc_val = f"{fpkpc:.4f}"
+            fpkpmc_val = f"{fpkpmc:.2f}"
+        elif uscg_fpk is not None and fpk == 0.0:
+            fpkpc_val, fpkpmc_val = "0.0000", "0.00"
+
         results.append({
-            "key": f"{family};{aro}", "Count": count,
+            "key": f"{family};{aro}",
+            "Read_Count": read_count,
+            "Fragment_Count": fragment_count,
             "Lateral_Coverage_%": f"{coverage:.2f}",
             "Gene_Length_bp": f"{gene_length_bp:.2f}" if isinstance(gene_length_bp, float) else str(gene_length_bp),
-            "RPK": f"{rpk:.4f}", "RPKG": f"{rpkg:.4f}", "RPKPC": rpkpc_val, "RPKPMC": rpkpmc_val
+            "RPK": f"{rpk:.4f}", "RPKG": f"{rpkg:.4f}", "RPKPC": rpkpc_val, "RPKPMC": rpkpmc_val,
+            "FPK": f"{fpk:.4f}", "FPKG": f"{fpkg:.4f}", "FPKPC": fpkpc_val, "FPKPMC": fpkpmc_val
         })
     results.sort(key=lambda x: x['key'])
     return results
@@ -218,15 +243,26 @@ def write_summary_file(results, output_path):
     print(BColors.cyan(f"--- Writing normalised summary to: {output_path} ---"))
     try:
         with open(output_path, 'w', newline='') as f:
-            header = ["#AMR_Gene_Family;ARO", "Count", "Lateral_Coverage_%", "Gene_Length_bp", "RPK", "RPKG", "RPKPC", "RPKPMC"]
+            header = [
+                "#AMR_Gene_Family;ARO", "Read_Count", "Fragment_Count", "Lateral_Coverage_%",
+                "Gene_Length_bp", "RPK", "FPK", "RPKG", "FPKG", "RPKPC", "FPKPC",
+                "RPKPMC", "FPKPMC"
+            ]
             writer = csv.DictWriter(f, fieldnames=header, delimiter='\t')
+            
             f.write('\t'.join(header) + '\n')
+            
             for row_data in results:
                 row_to_write = {
-                    "#AMR_Gene_Family;ARO": row_data["key"], "Count": row_data["Count"],
+                    "#AMR_Gene_Family;ARO": row_data["key"],
+                    "Read_Count": row_data["Read_Count"],
+                    "Fragment_Count": row_data["Fragment_Count"],
                     "Lateral_Coverage_%": row_data["Lateral_Coverage_%"],
-                    "Gene_Length_bp": row_data["Gene_Length_bp"], "RPK": row_data["RPK"],
-                    "RPKG": row_data["RPKG"], "RPKPC": row_data["RPKPC"], "RPKPMC": row_data["RPKPMC"]
+                    "Gene_Length_bp": row_data["Gene_Length_bp"],
+                    "RPK": row_data["RPK"], "RPKG": row_data["RPKG"],
+                    "RPKPC": row_data["RPKPC"], "RPKPMC": row_data["RPKPMC"],
+                    "FPK": row_data["FPK"], "FPKG": row_data["FPKG"],
+                    "FPKPC": row_data["FPKPC"], "FPKPMC": row_data["FPKPMC"]
                 }
                 writer.writerow(row_to_write)
         print(BColors.green(f"--- Successfully wrote report: {output_path} ---"))
@@ -260,7 +296,7 @@ def main():
     os.makedirs(args.tmp_dir, exist_ok=True)
     
     aro_to_family, aro_to_length = load_metadata(args.metadata)
-    uscg_rpk = load_uscg_rpk(args.uscg_report)
+    uscg_rpk, uscg_fpk = load_uscg_metrics(args.uscg_report)
     total_bases = load_total_bases(args.total_bases_file)
     
     hits_by_query = load_and_filter_hits(input_files_list, args.pid_cutoff, args.pid_type)
@@ -269,14 +305,14 @@ def main():
     hits_by_final_category = group_hits_by_final_category(hits_by_query, aro_to_family, args.consensus)
     print(BColors.green(f"--- Aggregated reads into {len(hits_by_final_category)} detailed categories. ---"))
 
-    detailed_normalised_results = calculate_normalised_metrics(hits_by_final_category, aro_to_length, uscg_rpk, total_bases)
+    detailed_normalised_results = calculate_normalised_metrics(hits_by_final_category, aro_to_length, uscg_rpk, uscg_fpk, total_bases)
     detailed_output_path = os.path.join(args.tmp_dir, f"{args.output_prefix}_homscan_detailed.tsv")
     write_summary_file(detailed_normalised_results, detailed_output_path)
 
     clean_hit_groups = aggregate_for_clean_summary(hits_by_final_category)
     print(BColors.green(f"--- Aggregated detailed results into {len(clean_hit_groups)} clean categories. ---"))
 
-    clean_normalised_results = calculate_normalised_metrics(clean_hit_groups, aro_to_length, uscg_rpk, total_bases)
+    clean_normalised_results = calculate_normalised_metrics(clean_hit_groups, aro_to_length, uscg_rpk, uscg_fpk, total_bases)
     clean_output_path = os.path.join(args.tmp_dir, f"{args.output_prefix}_homscan.tsv")
     write_summary_file(clean_normalised_results, clean_output_path)
     

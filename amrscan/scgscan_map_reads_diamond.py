@@ -109,7 +109,7 @@ def main():
     diamond_db_cmd = ['diamond', 'makedb', '--in', args.db, '--db', db_index_path, '--threads', str(args.threads)]
     run_command(diamond_db_cmd, "Building DIAMOND database index")
 
-    # --- Alignment Step: Loop through each input file ---
+    # Alignment Step: Loop through each input file
     created_tsv_files = []
     for input_file in input_files_list:
         input_basename = os.path.basename(input_file)
@@ -120,7 +120,7 @@ def main():
             '--db', db_index_path,
             '--threads', str(args.threads),
             f'--{args.sensitivity}',
-            '--query', input_file, # Process single query file at a time
+            '--query', input_file,
             '--out', output_tsv_path,
             '--max-target-seqs', '1',
             '--outfmt', '6', 'qseqid', 'sseqid', 'pident', 'length', 'mismatch', 'gapopen', 'qstart', 'qend', 'sstart', 'send', 'evalue', 'bitscore'
