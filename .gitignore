@@ -5,6 +5,7 @@ __pycache__/
 # Test runs and output files
 *.log
 *.html
+test/
 
 # Conda environment directory
 amrscan-env/
@@ -13,3 +14,6 @@ amrscan-env/
 dist/
 build/
 *.egg-info/
+
+# VS Code
+.vscode/

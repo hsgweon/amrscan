@@ -18,7 +18,7 @@ try:
 except ImportError:
     import pkg_resources
 
-__version__ = "1.0.1"
+__version__ = "1.0.0"
 
 # ANSI escape codes for colors
 class Colors:
@@ -197,10 +197,10 @@ def main():
     parser.add_argument("--db-card-metadata", default=None, help="Path to a custom CARD metadata file (overrides packaged DB).")
     
     # --- Performance & Filtering Arguments ---
-    parser.add_argument("-t", "--threads", type=int, default=8, help="Number of threads to use (default: 8).")
-    parser.add_argument("--homscan-pid-cutoff", type=float, default=0.9, help="Minimum percent identity for HOMSCAN hits (0.0-1.0 scale). Default: 0.95")
-    parser.add_argument("--varscan-pid-cutoff", type=float, default=0.9, help="Minimum nucleotide percent identity for VARSCAN hits (0.0-1.0 scale). Default: 0.95")
-    parser.add_argument("--consensus-cutoff", type=float, default=0.9, help="Consensus cutoff for homscan family assignment. Default: 0.80")
+    parser.add_argument("-t", "--threads", type=int, default=1, help="Number of threads to use (default: 1).")
+    parser.add_argument("--homscan-pid-cutoff", type=float, default=0.95, help="Minimum percent identity for HOMSCAN hits (0.0-1.0 scale). Default: 0.95")
+    parser.add_argument("--varscan-pid-cutoff", type=float, default=0.95, help="Minimum nucleotide percent identity for VARSCAN hits (0.0-1.0 scale). Default: 0.95")
+    parser.add_argument("--consensus-cutoff", type=float, default=0.8, help="Consensus cutoff for homscan family assignment. Default: 0.8")
     
     # --- Gene Type & PID Type Arguments ---
     parser.add_argument("--homscan-gene-types", default='H', help="Comma-delimited list of gene types for homscan (e.g., 'H,K'). Default: 'H'")
@@ -326,13 +326,10 @@ def main():
     # ==========================================================================
     log_boxed_header("HomScan", Colors.HEADER)
     if all(file_exists_and_is_not_empty(p) for p in sam_files):
-        # <<< MODIFIED: Added --pid-cutoff and --pid-type to the command >>>
         homscan_process_cmd = [
             sys.executable, str(src_dir / "homscan_process_sam.py"), "-i", sam_files_str, "--db", db_card,
             "--tmp-dir", str(homscan_tmp), "--output-prefix", output_prefix_name,
-            "--gene-types", args.homscan_gene_types,
-            "--pid-cutoff", str(args.homscan_pid_cutoff),
-            "--pid-type", args.homscan_pid_type
+            "--gene-types", args.homscan_gene_types
         ]
         if args.debug: homscan_process_cmd.append("--debug")
         if not run_command(homscan_process_cmd): sys.exit(1)

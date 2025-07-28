@@ -28,8 +28,6 @@ class BColors:
     @classmethod
     def yellow(cls, text): return cls._colorize(cls.WARNING, text)
 
-# --- Start of Protein Translation Code ---
-
 CODON_TABLE = {
     'TTT': 'F', 'TTC': 'F', 'TTA': 'L', 'TTG': 'L', 'TCT': 'S', 'TCC': 'S',
     'TCA': 'S', 'TCG': 'S', 'TAT': 'Y', 'TAC': 'Y', 'TAA': '_', 'TAG': '_',
@@ -174,14 +172,13 @@ def is_valid_alignment(cigar, pos, aln_len, target_len):
 
     return False
 
-def process_sam_file(sam_path, db_lengths, db_sequences, tmp_dir, min_aln_len, file_idx, debug_writer, allowed_gene_types):
-    """
-    Processes a single SAM file for AMR hits, appending a file-specific suffix to query_ids.
-    """
-    print(BColors.cyan(f"\n--- Processing SAM file for AMR hits: {os.path.basename(sam_path)} (Input File #{file_idx}) ---"))
+def process_sam_file(sam_path, db_lengths, db_sequences, tmp_dir, min_aln_len, file_idx, debug_writer, allowed_gene_types, pid_cutoff, pid_type):
+    pid_cutoff_percent = pid_cutoff * 100.0
+    pid_column_name = f"{pid_type}_pid"
+    print(BColors.cyan(f"\n--- Processing SAM file: {os.path.basename(sam_path)} (Input File #{file_idx}) ---"))
+    print(BColors.cyan(f"--- Applying filter: {pid_column_name} >= {pid_cutoff_percent:.2f}% ---"))
     
     query_sequences = {}
-
     with open(sam_path, 'r') as f:
         for line in f:
             if line.startswith('@'): continue
@@ -197,141 +194,146 @@ def process_sam_file(sam_path, db_lengths, db_sequences, tmp_dir, min_aln_len, f
     input_basename = os.path.basename(sam_path)
     hits_path = os.path.join(tmp_dir, f"{input_basename}_hits.tsv")
     
+    passing_hits = []
     hits_by_query_id = defaultdict(int)
-    with open(hits_path, 'w') as f_hits:
-        header = [
-            "ARO_matched", "query_id",
-            "nucleotide_pid", "nucleotide_mismatches", "nucleotide_denominator",
-            "protein_pid", "protein_mismatches", "protein_denominator",
-            "position_on_ref", "read_length", "target_length"
-        ]
-        f_hits.write('\t'.join(header) + '\n')
 
-        with open(sam_path, 'r') as f_in:
-            for line in f_in:
-                if line.startswith('@'): continue
+    with open(sam_path, 'r') as f_in:
+        for line in f_in:
+            if line.startswith('@'): continue
+            
+            try:
+                fields = line.strip().split('\t')
+                original_qname = fields[0]
+                suffixed_qname = f"{original_qname}_{file_idx}"
                 
-                try:
-                    fields = line.strip().split('\t')
-                    original_qname = fields[0]
-                    suffixed_qname = f"{original_qname}_{file_idx}"
-                    
-                    actual_seq = query_sequences.get(suffixed_qname)
-                    if not actual_seq: continue
+                actual_seq = query_sequences.get(suffixed_qname)
+                if not actual_seq: continue
 
-                    rname = fields[2]
-                    if rname == '*': continue
+                rname = fields[2]
+                if rname == '*': continue
 
-                    gene_type_match = re.search(r'__([HKVORU])(?:__|$)', rname)
-                    if not gene_type_match:
-                        print(BColors.yellow(f"Warning: Skipping SAM line due to unparseable gene type in RNAME: {rname}"), file=sys.stderr)
-                        continue
-                    gene_type = gene_type_match.group(1)
+                gene_type_match = re.search(r'__([HKVORU])(?:__|$)', rname)
+                if not gene_type_match:
+                    print(BColors.yellow(f"Warning: Skipping SAM line due to unparseable gene type in RNAME: {rname}"), file=sys.stderr)
+                    continue
+                gene_type = gene_type_match.group(1)
 
-                    debug_row = None
+                debug_row = None
+                if debug_writer:
+                    debug_row = {
+                        'query_id': suffixed_qname, 'ARO_matched': rname,
+                        'status': 'N/A', 'reason': 'N/A', 'details': 'N/A',
+                        'nucleotide_pid': 'N/A', 'aln_len': 'N/A'
+                    }
+
+                if gene_type not in allowed_gene_types:
                     if debug_writer:
-                        debug_row = {
-                            'query_id': suffixed_qname, 'ARO_matched': rname,
-                            'status': 'N/A', 'reason': 'N/A', 'details': 'N/A',
-                            'nucleotide_pid': 'N/A', 'aln_len': 'N/A'
-                        }
-
-                    if gene_type in allowed_gene_types:
-                        pos_str = fields[3]
-                        cigar = fields[5]
-                        optional_fields = fields[11:]
-                        
-                        aln_len = get_alignment_length_from_cigar(cigar)
-                        if debug_writer:
-                            debug_row['aln_len'] = aln_len
-
-                        if aln_len < min_aln_len:
-                            if debug_writer:
-                                debug_row['status'] = 'Rejected'
-                                debug_row['reason'] = 'Alignment length below cutoff'
-                                debug_row['details'] = f"Aln length {aln_len} < {min_aln_len}"
-                                debug_writer.writerow(debug_row)
-                            continue
-
-                        pos = int(pos_str)
-                        target_length = db_lengths.get(rname)
-                        
-                        if not is_valid_alignment(cigar, pos, aln_len, target_length):
-                            if debug_writer:
-                                debug_row['status'] = 'Rejected'
-                                debug_row['reason'] = 'Does not meet full read alignment criteria'
-                                debug_row['details'] = f"CIGAR: {cigar}, POS: {pos}, REF_LEN: {target_length}"
-                                debug_writer.writerow(debug_row)
-                            continue
-
-                        read_length = len(actual_seq)
-                        
-                        num_mismatches = get_nm_tag(optional_fields)
-                        nuc_pid_str = "NA"
-                        if num_mismatches is not None and aln_len > 0:
-                            pid_val = ((aln_len - num_mismatches) / aln_len) * 100
-                            nuc_pid_str = f"{pid_val:.2f}"
-                            if debug_writer:
-                                debug_row['nucleotide_pid'] = nuc_pid_str
-                        
-                        nuc_mismatches_str = str(num_mismatches) if num_mismatches is not None else "NA"
-
-                        prot_pid_str, prot_mismatches_str, prot_denom_str = "NA", "NA", "NA"
-                        ref_nuc_seq = db_sequences.get(rname)
-                        if ref_nuc_seq:
-                            prot_pid, prot_mismatches, prot_denom = calculate_protein_metrics(cigar, pos, actual_seq, ref_nuc_seq)
-                            prot_pid_str = f"{prot_pid:.2f}"
-                            prot_mismatches_str = str(prot_mismatches)
-                            prot_denom_str = str(prot_denom)
-                            
-                            try:
-                                nuc_pid = float(nuc_pid_str)
-                                prot_pid = float(prot_pid_str)
-                                if prot_pid < nuc_pid:
-                                    prot_pid_str = nuc_pid_str
-                            except ValueError:
-                                pass
-                        
-                        if debug_writer:
-                            debug_row['status'] = 'Accepted'
-                            debug_row['reason'] = 'Passes all filters'
-                            debug_writer.writerow(debug_row)
-
-                        output_data = [
-                            rname, suffixed_qname,
-                            nuc_pid_str, nuc_mismatches_str, str(aln_len),
-                            prot_pid_str, prot_mismatches_str, prot_denom_str,
-                            pos_str, read_length, str(target_length or "NA")
-                        ]
-                        f_hits.write('\t'.join(map(str, output_data)) + '\n')
-                        hits_by_query_id[suffixed_qname] += 1
-                    
-                    elif debug_writer:
                         debug_row['status'] = 'Skipped'
                         debug_row['reason'] = 'Gene type not in specified list'
                         debug_row['details'] = f"Gene type was '{gene_type}', allowed types are {list(allowed_gene_types)}"
                         debug_writer.writerow(debug_row)
-
-
-                except (IndexError, ValueError) as e:
-                    print(BColors.yellow(f"Warning: Skipping malformed SAM line: {line.strip()} | Error: {e}"), file=sys.stderr)
                     continue
+
+                pos_str = fields[3]
+                cigar = fields[5]
+                optional_fields = fields[11:]
+                
+                aln_len = get_alignment_length_from_cigar(cigar)
+                if debug_writer:
+                    debug_row['aln_len'] = aln_len
+
+                if aln_len < min_aln_len:
+                    if debug_writer:
+                        debug_row['status'] = 'Rejected'
+                        debug_row['reason'] = 'Alignment length below cutoff'
+                        debug_row['details'] = f"Aln length {aln_len} < {min_aln_len}"
+                        debug_writer.writerow(debug_row)
+                    continue
+
+                pos = int(pos_str)
+                target_length = db_lengths.get(rname)
+                
+                if not is_valid_alignment(cigar, pos, aln_len, target_length):
+                    if debug_writer:
+                        debug_row['status'] = 'Rejected'
+                        debug_row['reason'] = 'Does not meet full read alignment criteria'
+                        debug_row['details'] = f"CIGAR: {cigar}, POS: {pos}, REF_LEN: {target_length}"
+                        debug_writer.writerow(debug_row)
+                    continue
+
+                read_length = len(actual_seq)
+                
+                num_mismatches = get_nm_tag(optional_fields)
+                nuc_pid = 0.0
+                if num_mismatches is not None and aln_len > 0:
+                    nuc_pid = ((aln_len - num_mismatches) / aln_len) * 100
+                
+                prot_pid, prot_mismatches, prot_denom = 0.0, 0, 0
+                ref_nuc_seq = db_sequences.get(rname)
+                if ref_nuc_seq:
+                    prot_pid, prot_mismatches, prot_denom = calculate_protein_metrics(cigar, pos, actual_seq, ref_nuc_seq)
+                
+                current_pid_to_check = prot_pid if pid_type == 'protein' else nuc_pid
+                if current_pid_to_check < pid_cutoff_percent:
+                    if debug_writer:
+                        debug_row['status'] = 'Rejected'
+                        debug_row['reason'] = f'PID below cutoff'
+                        debug_row['details'] = f'{pid_column_name} {current_pid_to_check:.2f}% < {pid_cutoff_percent:.2f}%'
+                        debug_row['nucleotide_pid'] = f"{nuc_pid:.2f}"
+                        debug_writer.writerow(debug_row)
+                    continue
+
+                if debug_writer:
+                    debug_row['status'] = 'Accepted'
+                    debug_row['reason'] = 'Passes all filters'
+                    debug_row['nucleotide_pid'] = f"{nuc_pid:.2f}"
+                    debug_writer.writerow(debug_row)
+
+                final_prot_pid = prot_pid
+                if prot_pid < nuc_pid:
+                    final_prot_pid = nuc_pid
+
+                hit_data = {
+                    "ARO_matched": rname, "query_id": suffixed_qname,
+                    "nucleotide_pid": f"{nuc_pid:.2f}",
+                    "nucleotide_mismatches": str(num_mismatches) if num_mismatches is not None else "NA",
+                    "nucleotide_denominator": str(aln_len),
+                    "protein_pid": f"{final_prot_pid:.2f}",
+                    "protein_mismatches": str(prot_mismatches),
+                    "protein_denominator": str(prot_denom),
+                    "position_on_ref": pos_str,
+                    "read_length": str(read_length),
+                    "target_length": str(target_length or "NA")
+                }
+                
+                passing_hits.append(hit_data)
+                hits_by_query_id[suffixed_qname] += 1
+
+            except (IndexError, ValueError) as e:
+                print(BColors.yellow(f"Warning: Skipping malformed SAM line: {line.strip()} | Error: {e}"), file=sys.stderr)
+                continue
     
-    print(BColors.cyan("--- Adding uniqueness information to the hits table ---"))
+    print(BColors.cyan(f"--- Found {len(passing_hits)} hits passing all filters. Writing to output... ---"))
+
     try:
-        with open(hits_path, 'r') as f_in:
-            lines = f_in.readlines()
-        
-        with open(hits_path, 'w') as f_out:
-            header = lines[0].strip()
-            f_out.write(header + "\tuniqueness\n")
-            for line in lines[1:]:
-                fields = line.strip().split('\t')
-                query_id = fields[1]
+        with open(hits_path, 'w', newline='') as f_hits:
+            header = [
+                "ARO_matched", "query_id",
+                "nucleotide_pid", "nucleotide_mismatches", "nucleotide_denominator",
+                "protein_pid", "protein_mismatches", "protein_denominator",
+                "position_on_ref", "read_length", "target_length", "uniqueness"
+            ]
+            writer = csv.DictWriter(f_hits, fieldnames=header, delimiter='\t')
+            writer.writeheader()
+
+            for hit in passing_hits:
+                query_id = hit['query_id']
                 uniqueness = "UNIQUE" if hits_by_query_id[query_id] == 1 else "NOT_UNIQUE"
-                f_out.write('\t'.join(fields) + f"\t{uniqueness}\n")
+                hit['uniqueness'] = uniqueness
+                writer.writerow(hit)
+
     except Exception as e:
-        print(BColors.red(f"Error adding uniqueness information to {hits_path}: {e}"), file=sys.stderr)
+        print(BColors.red(f"Error writing hits file {hits_path}: {e}"), file=sys.stderr)
         sys.exit(1)
     
     files_created = [hits_path]
@@ -359,6 +361,18 @@ def main():
         "--gene-types",
         default='H',
         help="Comma-delimited list of gene types to process (e.g., 'H,K'). Default: 'H'"
+    )
+    parser.add_argument(
+        "--pid-cutoff",
+        type=float,
+        default=0.9,
+        help="Minimum percent identity to consider a hit (0.0-1.0 scale). Default: 0.9"
+    )
+    parser.add_argument(
+        "--pid-type",
+        choices=['protein', 'nucleotide'],
+        default='protein',
+        help="PID type to use for filtering. Default: protein"
     )
     parser.add_argument(
         "--debug",
@@ -393,7 +407,10 @@ def main():
         if not os.path.exists(sam_file):
             print(BColors.yellow(f"Warning: Input file not found, skipping: {sam_file}"), file=sys.stderr)
             continue
-        created = process_sam_file(sam_file, db_lengths, db_sequences, args.tmp_dir, args.min_aln_len, i + 1, debug_writer, allowed_gene_types)
+        created = process_sam_file(
+            sam_file, db_lengths, db_sequences, args.tmp_dir, args.min_aln_len,
+            i + 1, debug_writer, allowed_gene_types, args.pid_cutoff, args.pid_type
+        )
         all_created_files.extend(created)
 
     if debug_file:
@@ -405,3 +422,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
