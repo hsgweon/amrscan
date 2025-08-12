@@ -47,7 +47,7 @@ FINAL_HEADERS = {
     "homscan_MAP": [
         "AMR_Gene_Family", "ARO", "CARD_Short_Name_Misc", "Read_Count", "Fragment_Count", 
         "Lateral_Coverage_%", "Gene_Length_bp", "RPK", "FPK", "RPKG", "FPKG", 
-        "RPKPC", "FPKPC", "RPKPMC", "FPKPMC", "Resolved_RPKG", "Top_ARO", "Allocation_Proportions",
+        "RPKPC", "FPKPC", "RPKPMC", "FPKPMC", "Top_ARO", "Allocation_Proportions",
         "AMR_Gene_Family;ARO"
     ]
 }
