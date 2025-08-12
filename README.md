@@ -1,4 +1,4 @@
-# AMRScan
+# AMRScan v.1.0.3
 
 A comprehensive pipeline for identifying antimicrobial resistance (AMR) genes and variants from metagenomic sequencing data.
 
