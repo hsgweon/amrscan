@@ -14,7 +14,8 @@ The pipeline normalises results against universal single-copy genes (USCGs) and 
 -   **Dual Detection:** Simultaneously screens for both AMR gene presence (homology) and known resistance variants.
 -   **Packaged Databases:** Comes with the CARD and SCG databases pre-packaged for out-of-the-box use.
 -   **Robust Normalisation:** Normalises AMR gene abundance using a suite of metrics (RPK, RPKG, RPKPC, FPK, etc.) for well-informed, multi-level sample comparisons.
--   **Read Disambiguation:** Implements a **Maximum A Posteriori (MAP)** iterative algorithm to statistically resolve and distribute abundance.
+-   **Advanced Ambiguity Resolution:** Implements a **Maximum A Posteriori (MAP)** iterative algorithm to statistically resolve ambiguous reads, identifying the most probable gene within a homologous family and reporting the proportion of evidence supporting each candidate.
+-   **Prior-Guided Analysis:** Allows the incorporation of external knowledge (e.g., clinical prevalence data) via a user-provided priors file to improve the accuracy of the MAP resolution.
 -   **Interactive Visualisations:** Automatically generates detailed HTML reports for each AMR gene family, showing read coverage, identity, and uniqueness.
 -   **Flexible & Controllable:** Offers fine-grained control over analysis parameters, including separate PID cutoffs for homology and variant detection, choice of protein or nucleotide identity, and gene type filtering.
 -   **Safe & Smart Reruns:** Protects against accidental overwrites and allows for efficient re-analysis by skipping the time-consuming mapping step.
@@ -107,11 +108,12 @@ Here is a breakdown of all the metrics calculated:
 ## Understanding the MAP Resolver
 The most challenging aspect of quantifying AMR genes from metagenomes is handling ambiguous reads—reads that map with high identity to multiple different but highly similar reference genes (e.g., different variants of bla_CTX-M or bla_KPC).
 
-AMRScan's ***Maximum A Posteriori (MAP)*** resolver provides a statistical solution to this problem.
+AMRScan's ***Maximum A Posteriori (MAP)*** resolver provides a statistical solution to this problem by determining which gene is the most likely source of the ambiguous reads.
 
 ### How it Works
 The resolver uses an iterative, expectation-maximisation-like algorithm. The core idea is:
-1.  ***Initial Evidence***: The algorithm first calculates the abundance for each AMR gene using only the reads that map uniquely to it. This forms the initial, most reliable estimate.
+
+1.  ***Initial Evidence***: The algorithm first calculates the abundance for each AMR gene using only the reads that map **uniquely** to it. This forms the initial, most reliable estimate.
 2.  ***Iterative Allocation***: It then iterates through all the ambiguous reads. For each ambiguous read, it looks at the current abundance estimates of all the genes it mapped to. It proportionally distributes the ambiguous read's abundance among those candidate genes. For example, if a read maps to Gene A and Gene B, and Gene A currently has 90 "votes" (from unique reads) while Gene B has 10, the ambiguous read's abundance will be split 90% to Gene A and 10% to Gene B.
 3.  ***Convergence***: This process is repeated for many iterations. In each round, the abundance estimates are refined based on the newly distributed evidence from the previous round. The algorithm stops when the abundance estimates for all genes stabilise (i.e., they no longer change significantly between iterations).
 
