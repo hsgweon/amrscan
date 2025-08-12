@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+# amrscan_pipeline/amrscan/amrscan.py
 import argparse
 import logging
 import subprocess
@@ -18,7 +19,7 @@ try:
 except ImportError:
     import pkg_resources
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 # ANSI escape codes for colors
 class Colors:
@@ -50,7 +51,7 @@ class ColoredFormatter(logging.Formatter):
 
 def get_py_dependency_versions():
     """Retrieves the versions of specified Python packages."""
-    dependencies = ['pip', 'setuptools']
+    dependencies = ['pip', 'setuptools', 'pandas', 'numpy']
     versions = {}
     use_importlib = 'importlib' in sys.modules and hasattr(sys.modules.get('importlib'), 'metadata')
 
@@ -186,56 +187,66 @@ def main():
         description=f"amrscan pipeline v{__version__}. A wrapper script to run the amrscan analysis pipeline.",
         formatter_class=argparse.RawTextHelpFormatter
     )
-    # --- I/O Arguments ---
+    # I/O Arguments
     parser.add_argument("-i", "--input-fastqs", required=True, type=str, help="Comma-separated list of input FASTQ files.")
     parser.add_argument("-o", "--output-prefix", required=True, help="Prefix for output files and the main output directory.")
     
-    # --- Database Arguments (now optional) ---
+    # Database Arguments
     parser.add_argument("--db-card", default=None, help="Path to a custom CARD AMR database FASTA file (overrides packaged DB).")
     parser.add_argument("--db-scg", default=None, help="Path to a custom Single Copy Genes FASTA file (overrides packaged DB).")
     parser.add_argument("--db-scg-lengths", default=None, help="Path to a custom SCG gene lengths TSV file (overrides packaged DB).")
     parser.add_argument("--db-card-metadata", default=None, help="Path to a custom CARD metadata file (overrides packaged DB).")
     
-    # --- Performance & Filtering Arguments ---
+    # Performance & Filtering Arguments
     parser.add_argument("-t", "--threads", type=int, default=8, help="Number of threads to use (default: 8).")
     parser.add_argument("--homscan-pid-cutoff", type=float, default=0.9, help="Minimum percent identity for HOMSCAN hits (0.0-1.0 scale). Default: 0.95")
     parser.add_argument("--varscan-pid-cutoff", type=float, default=0.9, help="Minimum nucleotide percent identity for VARSCAN hits (0.0-1.0 scale). Default: 0.95")
     parser.add_argument("--consensus-cutoff", type=float, default=0.9, help="Consensus cutoff for homscan family assignment. Default: 0.80")
     
-    # --- Gene Type & PID Type Arguments ---
+    # Gene Type & PID Type Arguments
     parser.add_argument("--homscan-gene-types", default='H', help="Comma-delimited list of gene types for homscan (e.g., 'H,K'). Default: 'H'")
     parser.add_argument("--varscan-gene-types", default='V,R', help="Comma-delimited list of variant types for varscan (e.g., 'V,R,O'). Default: 'V,R'")
     parser.add_argument("--homscan-pid-type", choices=['protein', 'nucleotide'], default='protein', help="PID type to use for homscan filtering and WTA. Default: protein")
     
-    # --- Control Flow Arguments ---
+    # MAP Resolver Arguments
+    map_group = parser.add_argument_group('MAP Resolver Arguments', 'Options for the Maximum A Posteriori abundance resolver.')
+    map_group.add_argument("--map-priors-file", default=None, help="Path to a tab-separated file of priors for the MAP resolver.")
+    map_group.add_argument("--map-metric-column", default='FPKPMC', help="The numeric column from the homscan report to use for MAP abundance resolution. Default: FPKPMC")
+    map_group.add_argument("--map-base-prior", type=float, default=1.0, help="Baseline prior 'pseudo-count' for genes NOT in the priors file. Default: 1.0")
+    map_group.add_argument("--map-prior-strength", type=float, default=1.0, help="Multiplier for the influence of the priors file. Default: 1.0")
+
+    # Control Flow Arguments
     parser.add_argument("--skip-mapping", action="store_true", help="Skip mapping and start from homscan/varscan.")
+    parser.add_argument("--skip-to-map-resolve", action="store_true", help="Skip to the final MAP resolution step. Requires homscan to have been run.")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode, creating detailed logs for sub-scripts.")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing output directory.")
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     args = parser.parse_args()
 
-    # --- Setup Paths ---
+    # Setup Paths
     fastq_files = [Path(f.strip()) for f in args.input_fastqs.split(',')]
     input_fastqs_str = ",".join(map(str, fastq_files))
     output_prefix_path = Path(args.output_prefix).resolve()
     output_prefix_name = output_prefix_path.name
     main_output_dir = output_prefix_path
 
-    # --- Handle Existing Directory and --overwrite Flag ---
+    # Handle Existing Directory and --overwrite Flag
     if main_output_dir.exists():
         if not args.overwrite:
             print(f"{Colors.FAIL}Error: Output directory '{main_output_dir}' already exists.{Colors.ENDC}")
             print(f"{Colors.FAIL}Please remove it or use the --overwrite flag to proceed.{Colors.ENDC}")
             sys.exit(1)
         else:
-            if not args.skip_mapping:
-                print(f"{Colors.WARNING}Warning: --overwrite flag is set. The entire directory '{main_output_dir}' will be removed.{Colors.ENDC}")
-                try:
-                    shutil.rmtree(main_output_dir)
-                except OSError as e:
-                    print(f"{Colors.FAIL}Error: Could not remove directory {main_output_dir}. Reason: {e}{Colors.ENDC}")
-                    sys.exit(1)
-            else:
+            if args.skip_to_map_resolve:
+                print(f"{Colors.WARNING}Warning: --overwrite and --skip-to-map-resolve are set.{Colors.ENDC}")
+                print(f"{Colors.WARNING}Cleaning up previous MAP resolver results...{Colors.ENDC}")
+                files_to_remove = [
+                    main_output_dir / "tmp" / "homscan" / f"{output_prefix_name}_homscan_MAP.tsv",
+                    main_output_dir / f"{output_prefix_name}_homscan_MAP.tsv"
+                ]
+                for f in files_to_remove:
+                    if f.exists(): os.remove(f)
+            elif args.skip_mapping:
                 print(f"{Colors.WARNING}Warning: --overwrite and --skip-mapping are set.{Colors.ENDC}")
                 print(f"{Colors.WARNING}Cleaning up previous analysis results but preserving mapping data...{Colors.ENDC}")
                 dirs_to_remove = [
@@ -247,12 +258,19 @@ def main():
                     if d.exists(): shutil.rmtree(d)
                 for f in glob.glob(str(main_output_dir / f"{output_prefix_name}_*.tsv")):
                     os.remove(f)
+            else:
+                print(f"{Colors.WARNING}Warning: --overwrite flag is set. The entire directory '{main_output_dir}' will be removed.{Colors.ENDC}")
+                try:
+                    shutil.rmtree(main_output_dir)
+                except OSError as e:
+                    print(f"{Colors.FAIL}Error: Could not remove directory {main_output_dir}. Reason: {e}{Colors.ENDC}")
+                    sys.exit(1)
 
-    # --- Setup Logging and Directories ---
+    # Setup Logging and Directories
     log_dir = main_output_dir / "logs"
     setup_logging(log_dir / f"{output_prefix_name}_run.log")
     
-    # --- Write Run Details ---
+    # Write Run Details
     run_details_file = log_dir / f"{output_prefix_name}_run_details.txt"
     print(f"{Colors.BLUE}{Colors.BOLD}--- amrscan pipeline starting (v{__version__}) ---{Colors.ENDC}")
     with open(run_details_file, "w") as f:
@@ -265,13 +283,13 @@ def main():
         for tool, version in get_tool_versions().items(): f.write(f"{tool} Version: {version}\n")
         for dep, version in get_py_dependency_versions().items(): f.write(f"{dep} Version: {version}\n")
 
-    # --- Resolve Database Paths ---
+    # Resolve Database Paths
     db_card = args.db_card or get_data_path('databases/amrscan_DB_CARD_v4.0.0/amrscan_DB_CARD_v4.0.0_NR_all_nuc.fasta')
     db_scg = args.db_scg or get_data_path('databases/amrscan_DB_SCG/SCG.fasta')
     db_scg_lengths = args.db_scg_lengths or get_data_path('databases/amrscan_DB_SCG/SCG_gene_lengths.tsv')
     db_card_metadata = args.db_card_metadata or get_data_path('databases/amrscan_DB_CARD_v4.0.0/amrscan_DB_CARD_v4.0.0_NR_metadata_curated.txt')
 
-    # --- Define all sub-directories and script paths ---
+    # Define all sub-directories and script paths
     src_dir = Path(__file__).parent.resolve()
     tmp_dir = main_output_dir / "tmp"
     amrscan_tmp = tmp_dir / "amrscan"
@@ -287,7 +305,7 @@ def main():
     # ==========================================================================
     # MAPPING
     # ==========================================================================
-    if not args.skip_mapping:
+    if not args.skip_mapping and not args.skip_to_map_resolve:
         log_boxed_header("Mapping", Colors.HEADER)
         amr_map_cmd = [sys.executable, str(src_dir / "amrscan_map_reads_bwa.py"), "-i", input_fastqs_str, "--db", db_card, "--tmp-dir", str(amrscan_tmp), "-t", str(args.threads)]
         if not run_command(amr_map_cmd): sys.exit(1)
@@ -308,110 +326,127 @@ def main():
         calc_bases_cmd = [sys.executable, str(src_dir / "scgscan_calculate_total_bases.py"), "-i", input_fastqs_str, "-o", str(total_bases_file)]
         if not run_command(calc_bases_cmd): sys.exit(1)
     else:
-        print(f"{Colors.WARNING}Skipping mapping steps as requested by --skip-mapping.{Colors.ENDC}")
-        total_bases_file = scgscan_tmp / f"{output_prefix_name}_total_bases.txt"
-        uscg_report = scgscan_tmp / f"{output_prefix_name}_uscg_report.tsv"
-        if not total_bases_file.is_file() or not uscg_report.is_file():
-            logging.error("--skip-mapping was used, but required files from the mapping step are missing.")
-            sys.exit(1)
+        if args.skip_to_map_resolve:
+            print(f"{Colors.WARNING}Skipping all steps before MAP resolution as requested by --skip-to-map-resolve.{Colors.ENDC}")
+            homscan_detailed_report = homscan_tmp / f"{output_prefix_name}_homscan_detailed.tsv"
+            if not file_exists_and_is_not_empty(homscan_detailed_report):
+                 logging.error("--skip-to-map-resolve was used, but the required homscan detailed report is missing.")
+                 logging.error(f"Missing file: {homscan_detailed_report}")
+                 sys.exit(1)
+        else: # This is --skip-mapping
+            print(f"{Colors.WARNING}Skipping mapping steps as requested by --skip-mapping.{Colors.ENDC}")
+            total_bases_file = scgscan_tmp / f"{output_prefix_name}_total_bases.txt"
+            uscg_report = scgscan_tmp / f"{output_prefix_name}_uscg_report.tsv"
+            if not total_bases_file.is_file() or not uscg_report.is_file():
+                logging.error("--skip-mapping was used, but required files from the mapping step are missing.")
+                sys.exit(1)
 
-    # --- Define dynamic file paths for downstream steps ---
+    # Define dynamic file paths for downstream steps
     sam_files = [amrscan_tmp / f"{f.name}.sam" for f in fastq_files]
     sam_files_str = ",".join(map(str, sam_files))
     homscan_hits_files = [homscan_tmp / f"{s.name}_hits.tsv" for s in sam_files]
     homscan_hits_files_str = ",".join(map(str, homscan_hits_files))
+    homscan_detailed_report = homscan_tmp / f"{output_prefix_name}_homscan_detailed.tsv"
+    total_bases_file = scgscan_tmp / f"{output_prefix_name}_total_bases.txt"
+    uscg_report = scgscan_tmp / f"{output_prefix_name}_uscg_report.tsv"
 
     # ==========================================================================
     # HOMSCAN
     # ==========================================================================
-    log_boxed_header("HomScan", Colors.HEADER)
-    if all(file_exists_and_is_not_empty(p) for p in sam_files):
-        # <<< MODIFIED: Added --pid-cutoff and --pid-type to the command >>>
-        homscan_process_cmd = [
-            sys.executable, str(src_dir / "homscan_process_sam.py"), "-i", sam_files_str, "--db", db_card,
-            "--tmp-dir", str(homscan_tmp), "--output-prefix", output_prefix_name,
-            "--gene-types", args.homscan_gene_types,
-            "--pid-cutoff", str(args.homscan_pid_cutoff),
-            "--pid-type", args.homscan_pid_type
-        ]
-        if args.debug: homscan_process_cmd.append("--debug")
-        if not run_command(homscan_process_cmd): sys.exit(1)
-
-        if all(file_exists_and_is_not_empty(p) for p in homscan_hits_files):
-            homscan_tabulate_cmd = [
-                sys.executable, str(src_dir / "homscan_tabulate_and_normalise.py"), "-i", homscan_hits_files_str,
-                "--metadata", db_card_metadata, "--uscg-report", str(uscg_report),
-                "--total-bases-file", str(total_bases_file), "--pid-cutoff", str(args.homscan_pid_cutoff),
-                "--consensus", str(args.consensus_cutoff), "--tmp-dir", str(homscan_tmp),
-                "--output-prefix", output_prefix_name,
-                "--pid-type", args.homscan_pid_type
-            ]
-            if not run_command(homscan_tabulate_cmd): sys.exit(1)
-
-            homscan_resolve_cmd = [
-                sys.executable, str(src_dir / "homscan_resolve_wta.py"), "-i", homscan_hits_files_str,
-                "--metadata", db_card_metadata, "--pid-cutoff", str(args.homscan_pid_cutoff),
+    if not args.skip_to_map_resolve:
+        log_boxed_header("HomScan", Colors.HEADER)
+        if all(file_exists_and_is_not_empty(p) for p in sam_files):
+            homscan_process_cmd = [
+                sys.executable, str(src_dir / "homscan_process_sam.py"), "-i", sam_files_str, "--db", db_card,
                 "--tmp-dir", str(homscan_tmp), "--output-prefix", output_prefix_name,
+                "--gene-types", args.homscan_gene_types,
+                "--pid-cutoff", str(args.homscan_pid_cutoff),
                 "--pid-type", args.homscan_pid_type
             ]
-            if args.debug: homscan_resolve_cmd.append("--debug-wta")
-            if not run_command(homscan_resolve_cmd): sys.exit(1)
+            if args.debug: homscan_process_cmd.append("--debug")
+            if not run_command(homscan_process_cmd): sys.exit(1)
+            if all(file_exists_and_is_not_empty(p) for p in homscan_hits_files):
+                homscan_tabulate_cmd = [
+                    sys.executable, str(src_dir / "homscan_tabulate_and_normalise.py"), "-i", homscan_hits_files_str,
+                    "--metadata", db_card_metadata, "--uscg-report", str(uscg_report),
+                    "--total-bases-file", str(total_bases_file), "--pid-cutoff", str(args.homscan_pid_cutoff),
+                    "--consensus", str(args.consensus_cutoff), "--tmp-dir", str(homscan_tmp),
+                    "--output-prefix", output_prefix_name,
+                    "--pid-type", args.homscan_pid_type
+                ]
+                if not run_command(homscan_tabulate_cmd): sys.exit(1)
 
-            wta_summary = homscan_tmp / f"{output_prefix_name}_summary_wta.tsv"
-            wta_assignments = homscan_tmp / f"{output_prefix_name}_wta_assignments.tsv"
-            if file_exists_and_is_not_empty(wta_summary):
                 homscan_visualise_cmd = [
                     sys.executable, str(src_dir / "homscan_visualise.py"), "-i", homscan_hits_files_str,
                     "--metadata", db_card_metadata, "--db", db_card,
                     "-o", str(homscan_html_dir), "--pid-cutoff", str(args.homscan_pid_cutoff),
-                    "--wta-summary", str(wta_summary), "--wta-assignments", str(wta_assignments),
                     "--pid-type", args.homscan_pid_type
                 ]
                 if not run_command(homscan_visualise_cmd): sys.exit(1)
             else:
-                logging.warning("WTA summary for homscan not found. Skipping visualization.")
+                logging.warning("Homscan hits not found or empty. Skipping rest of homscan.")
         else:
-            logging.warning("Homscan hits not found or empty. Skipping rest of homscan.")
-    else:
-        logging.warning("SAM files from AMR mapping not found or empty. Skipping homscan.")
+            logging.warning("SAM files from AMR mapping not found or empty. Skipping homscan.")
+
 
     # ==========================================================================
     # VARSCAN
     # ==========================================================================
-    log_boxed_header("VarScan", Colors.HEADER)
-    if all(file_exists_and_is_not_empty(p) for p in sam_files):
-        varscan_process_cmd = [
-            sys.executable, str(src_dir / "varscan_process_sam.py"), "-i", sam_files_str, "--db", db_card,
-            "--tmp-dir", str(varscan_tmp), "--output-prefix", output_prefix_name,
-            "--gene-types", args.varscan_gene_types
-        ]
-        if args.debug: varscan_process_cmd.append("--debug")
-        if not run_command(varscan_process_cmd): sys.exit(1)
-
-        variant_hits = varscan_tmp / f"{output_prefix_name}_variant_hits.tsv"
-        if file_exists_and_is_not_empty(variant_hits):
-            varscan_tabulate_cmd = [
-                sys.executable, str(src_dir / "varscan_tabulate_and_normalise.py"), "-i", str(variant_hits),
-                "--metadata", db_card_metadata, "--uscg-report", str(uscg_report),
-                "--total-bases-file", str(total_bases_file), "--tmp-dir", str(varscan_tmp),
-                "--output-prefix", output_prefix_name, "--pid-cutoff", str(args.varscan_pid_cutoff)
+    if not args.skip_to_map_resolve:
+        log_boxed_header("VarScan", Colors.HEADER)
+        if all(file_exists_and_is_not_empty(p) for p in sam_files):
+            varscan_process_cmd = [
+                sys.executable, str(src_dir / "varscan_process_sam.py"), "-i", sam_files_str, "--db", db_card,
+                "--tmp-dir", str(varscan_tmp), "--output-prefix", output_prefix_name,
+                "--gene-types", args.varscan_gene_types
             ]
-            if not run_command(varscan_tabulate_cmd): sys.exit(1)
+            if args.debug: varscan_process_cmd.append("--debug")
+            if not run_command(varscan_process_cmd): sys.exit(1)
 
-            variant_alignments = varscan_tmp / f"{output_prefix_name}_variant_alignments.txt"
-            if file_exists_and_is_not_empty(variant_alignments):
-                varscan_visualise_cmd = [
-                    sys.executable, str(src_dir / "varscan_visualise.py"), "--variant-hits", str(variant_hits),
-                    "--variant-alignments", str(variant_alignments), "--metadata", db_card_metadata,
-                    "-o", str(varscan_html_dir)
+            variant_hits = varscan_tmp / f"{output_prefix_name}_variant_hits.tsv"
+            if file_exists_and_is_not_empty(variant_hits):
+                varscan_tabulate_cmd = [
+                    sys.executable, str(src_dir / "varscan_tabulate_and_normalise.py"), "-i", str(variant_hits),
+                    "--metadata", db_card_metadata, "--uscg-report", str(uscg_report),
+                    "--total-bases-file", str(total_bases_file), "--tmp-dir", str(varscan_tmp),
+                    "--output-prefix", output_prefix_name, "--pid-cutoff", str(args.varscan_pid_cutoff)
                 ]
-                if not run_command(varscan_visualise_cmd): sys.exit(1)
+                if not run_command(varscan_tabulate_cmd): sys.exit(1)
+
+                variant_alignments = varscan_tmp / f"{output_prefix_name}_variant_alignments.txt"
+                if file_exists_and_is_not_empty(variant_alignments):
+                    varscan_visualise_cmd = [
+                        sys.executable, str(src_dir / "varscan_visualise.py"), "--variant-hits", str(variant_hits),
+                        "--variant-alignments", str(variant_alignments), "--metadata", db_card_metadata,
+                        "-o", str(varscan_html_dir)
+                    ]
+                    if not run_command(varscan_visualise_cmd): sys.exit(1)
+                else:
+                    logging.warning("Variant alignments not found. Skipping varscan visualization.")
             else:
-                logging.warning("Variant alignments not found. Skipping varscan visualization.")
+                logging.warning("Variant hits not found. Skipping rest of varscan.")
         else:
-            logging.warning("Variant hits not found. Skipping rest of varscan.")
+            logging.warning("SAM files from AMR mapping not found or empty. Skipping varscan.")
+
+    # ==========================================================================
+    # HOMSCAN - MAP RESOLUTION
+    # ==========================================================================
+    log_boxed_header("HomScan - MAP Resolution", Colors.HEADER)
+    if file_exists_and_is_not_empty(homscan_detailed_report):
+        map_resolve_cmd = [
+            sys.executable, str(src_dir / "homscan_resolve_MAP.py"),
+            "-i", str(homscan_detailed_report),
+            "--output-prefix", str(homscan_tmp / output_prefix_name),
+            "--metric-column", args.map_metric_column,
+            "--base-prior", str(args.map_base_prior),
+            "--prior-strength", str(args.map_prior_strength)
+        ]
+        if args.map_priors_file:
+            map_resolve_cmd.extend(["-p", args.map_priors_file])
+        
+        if not run_command(map_resolve_cmd): sys.exit(1)
     else:
-        logging.warning("SAM files from AMR mapping not found or empty. Skipping varscan.")
+        logging.warning(f"Homscan detailed report not found or empty: {homscan_detailed_report}. Skipping MAP resolution.")
 
     # ==========================================================================
     # FINAL

@@ -1,0 +1,20 @@
+# Priors for common clinically significant AMR genes
+# Format: ARO_ID	Weight
+# Weights are based on a 5-year study of local hospital isolates.
+
+# --- High Priority / Very Common Carbapenemases ---
+ARO_3002312	15.0	# KPC-2, extremely common in our region
+ARO_3000589	12.0	# NDM-1
+ARO_3001782	9.5	# OXA-48
+
+# --- Common Extended-Spectrum Beta-Lactamases (ESBLs) ---
+ARO_3001878	8.0	# CTX-M-15
+ARO_3001877	6.0	# CTX-M-14
+ARO_3001071	4.0	# SHV-12
+
+# --- Important MCR genes (Colistin Resistance) ---
+ARO_3003689	20.0	# mcr-1, high clinical alert status
+
+# --- Tetracycline resistance genes (very common but lower alert) ---
+ARO_3000165	2.5	# tet(A)
+ARO_3000166	2.5	# tet(B)

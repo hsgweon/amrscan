@@ -1,3 +1,5 @@
+# amrscan_pipeline/setup.py
+
 import setuptools
 import re
 
@@ -17,6 +19,11 @@ setuptools.setup(
     description="A Bioinformatics Tool for AMR gene and variant detection from metagenomic data.",
     packages=setuptools.find_packages(),
     
+    install_requires=[
+        'pandas',
+        'numpy',
+    ],
+
     include_package_data=True,
     package_data={
         'amrscan': ['databases/**/*']

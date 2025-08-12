@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 
+##############################################################
+# This is experimental feature and not currently implemented #
+##############################################################
+
+# amrscan_pipeline/amrscan/homscan_resolve_wta.py
 import argparse
 import os
 import sys

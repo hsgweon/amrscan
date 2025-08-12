@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+# amrscan_pipeline/amrscan/scgscan_calculate_total_bases.py
 import argparse
 import os
 import sys

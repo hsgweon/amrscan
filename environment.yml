@@ -4,11 +4,13 @@ channels:
   - bioconda
   - defaults
 dependencies:
-  - python
+  - python>=3.7
   - pip
   - bwa
   - diamond
   - samtools
-
+  - pandas
+  - numpy
+  
   - pip:
     - .

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# amrscan_pipeline/amrscan/varscan_tabulate_and_normalise.py
 
 import argparse
 import os
 import sys
 import csv
-from collections import Counter
+import re
+from collections import Counter, defaultdict
 
 class BColors:
     """A helper class to add color to terminal output."""
@@ -55,26 +57,31 @@ def load_metadata(metadata_path):
     print(BColors.green(f"--- Loaded metadata for {len(aro_to_family)} AROs."))
     return aro_to_family, aro_to_length
 
-def load_uscg_rpk(uscg_report_path):
-    """Loads the Overall_RPK_Across_All_USCGs value from the USCG report."""
-    print(BColors.cyan(f"--- Loading USCG RPK from: {uscg_report_path} ---"))
+def load_uscg_metrics(uscg_report_path):
+    """Loads the Overall RPK and FPK values from the USCG report."""
+    print(BColors.cyan(f"--- Loading USCG metrics from: {uscg_report_path} ---"))
     if not os.path.exists(uscg_report_path):
         print(BColors.red(f"Error: USCG report file not found at '{uscg_report_path}'"), file=sys.stderr)
-        return None
+        return None, None
+        
+    uscg_rpk, uscg_fpk = None, None
     try:
         with open(uscg_report_path, 'r') as f:
             for line in f:
                 if line.startswith("Overall_RPK_Across_All_USCGs"):
-                    parts = line.strip().split('\t')
-                    if len(parts) == 2:
-                        rpk_val = float(parts[1])
-                        print(BColors.green(f"--- Found Overall USCG RPK: {rpk_val:.4f} ---"))
-                        return rpk_val
-    except (IOError, ValueError) as e:
+                    uscg_rpk = float(line.strip().split('\t')[1])
+                elif line.startswith("Overall_FPK_Across_All_USCGs"):
+                    uscg_fpk = float(line.strip().split('\t')[1])
+    except (IOError, ValueError, IndexError) as e:
         print(BColors.red(f"Error reading or parsing USCG report file: {e}"), file=sys.stderr)
-        return None
-    print(BColors.red("Error: 'Overall_RPK_Across_All_USCGs' not found in the USCG report."), file=sys.stderr)
-    return None
+        return None, None
+    
+    if uscg_rpk is None:
+        print(BColors.yellow("Warning: 'Overall_RPK_Across_All_USCGs' not found in the USCG report."), file=sys.stderr)
+    if uscg_fpk is None:
+        print(BColors.yellow("Warning: 'Overall_FPK_Across_All_USCGs' not found in the USCG report. FPK-based normalization will be skipped."), file=sys.stderr)
+        
+    return uscg_rpk, uscg_fpk
 
 def load_total_bases(filepath):
     """Loads the total base count from a file."""
@@ -91,12 +98,13 @@ def load_total_bases(filepath):
         print(BColors.red(f"Error reading or parsing total bases file: {e}"), file=sys.stderr)
         sys.exit(1)
 
-def count_variant_hits(input_files, pid_cutoff_fraction):
+def count_variant_hits_and_fragments(input_files, pid_cutoff_fraction):
     """
     Reads all input _variant_hits.tsv files, filters by PID, and counts confirmed
-    reads for each variant ARO.
+    reads and unique fragments for each variant ARO.
     """
-    final_counts = Counter()
+    read_counts = Counter()
+    fragment_sets = defaultdict(set)
     pid_cutoff_percent = pid_cutoff_fraction * 100.0
     
     print(BColors.cyan(f"--- Processing {len(input_files)} variant hits file(s) with PID >= {pid_cutoff_percent:.2f}%... ---"))
@@ -107,28 +115,38 @@ def count_variant_hits(input_files, pid_cutoff_fraction):
                 for row in reader:
                     try:
                         if float(row['nucleotide_pid']) >= pid_cutoff_percent:
-                            final_counts[row['ARO_matched']] += 1
+                            aro = row['ARO_matched']
+                            query_id = row['query_id']
+                            
+                            # Count reads
+                            read_counts[aro] += 1
+                            
+                            # Count unique fragments by stripping _1, _2, etc.
+                            fragment_id = re.sub(r'_\d+$', '', query_id)
+                            fragment_sets[aro].add(fragment_id)
+
                     except (ValueError, KeyError):
                         print(BColors.yellow(f"Warning: Skipping row in {file_path} due to missing or invalid columns."), file=sys.stderr)
                         continue
         except FileNotFoundError:
             print(BColors.yellow(f"Warning: Input file not found, skipping: {file_path}"), file=sys.stderr)
     
-    return final_counts
+    return read_counts, fragment_sets
 
-def calculate_and_write_summary(final_counts, aro_to_family, aro_to_length, uscg_rpk, total_bases, output_path):
+def calculate_and_write_summary(read_counts, fragment_sets, aro_to_family, aro_to_length, uscg_rpk, uscg_fpk, total_bases, output_path):
     """Calculates all metrics and writes the final normalised variant summary."""
     print(BColors.cyan(f"--- Writing normalised variant summary to: {output_path} ---"))
     total_bases_in_gb = (total_bases / 1e9) if total_bases > 0 else 0
     
     results = []
-    for aro, count in final_counts.items():
+    for aro, r_count in read_counts.items():
         family = aro_to_family.get(aro, "Unknown_Family")
         gene_length_bp = aro_to_length.get(aro, 0)
+        f_count = len(fragment_sets.get(aro, set()))
 
-        rpk = (count / (gene_length_bp / 1000.0)) if gene_length_bp > 0 else 0.0
+        # RPK-based metrics
+        rpk = (r_count / (gene_length_bp / 1000.0)) if gene_length_bp > 0 else 0.0
         rpkg = (rpk / total_bases_in_gb) if total_bases_in_gb > 0 else 0.0
-        
         rpkpc_val, rpkpmc_val = "NA", "NA"
         if uscg_rpk is not None and uscg_rpk > 1e-9:
             rpkpc = rpk / uscg_rpk
@@ -138,24 +156,43 @@ def calculate_and_write_summary(final_counts, aro_to_family, aro_to_length, uscg
         elif uscg_rpk is not None and rpk == 0.0:
             rpkpc_val, rpkpmc_val = "0.0000", "0.00"
 
+        # FPK-based metrics
+        fpk = (f_count / (gene_length_bp / 1000.0)) if gene_length_bp > 0 else 0.0
+        fpkg = (fpk / total_bases_in_gb) if total_bases_in_gb > 0 else 0.0
+        fpkpc_val, fpkpmc_val = "NA", "NA"
+        if uscg_fpk is not None and uscg_fpk > 1e-9:
+            fpkpc = fpk / uscg_fpk
+            fpkpmc = fpkpc * 1_000_000
+            fpkpc_val = f"{fpkpc:.4f}"
+            fpkpmc_val = f"{fpkpmc:.2f}"
+        elif uscg_fpk is not None and fpk == 0.0:
+            fpkpc_val, fpkpmc_val = "0.0000", "0.00"
+
         results.append({
-            "key": f"{family};{aro}", "Count": count,
+            "key": f"{family};{aro}", "Read_Count": r_count, "Fragment_Count": f_count,
             "Gene_Length_bp": str(gene_length_bp),
-            "RPK": f"{rpk:.4f}", "RPKG": f"{rpkg:.4f}", "RPKPC": rpkpc_val, "RPKPMC": rpkpmc_val
+            "RPK": f"{rpk:.4f}", "RPKG": f"{rpkg:.4f}", "RPKPC": rpkpc_val, "RPKPMC": rpkpmc_val,
+            "FPK": f"{fpk:.4f}", "FPKG": f"{fpkg:.4f}", "FPKPC": fpkpc_val, "FPKPMC": fpkpmc_val
         })
     
     results.sort(key=lambda x: x['key'])
 
     try:
         with open(output_path, 'w', newline='') as f:
-            header = ["#AMR_Gene_Family;ARO", "Count", "Gene_Length_bp", "RPK", "RPKG", "RPKPC", "RPKPMC"]
+            header = [
+                "#AMR_Gene_Family;ARO", "Read_Count", "Fragment_Count", "Gene_Length_bp", 
+                "RPK", "FPK", "RPKG", "FPKG", "RPKPC", "FPKPC", "RPKPMC", "FPKPMC"
+            ]
             writer = csv.DictWriter(f, fieldnames=header, delimiter='\t')
             f.write('\t'.join(header) + '\n')
             for row_data in results:
                 row_to_write = {
-                    "#AMR_Gene_Family;ARO": row_data["key"], "Count": row_data["Count"],
-                    "Gene_Length_bp": row_data["Gene_Length_bp"], "RPK": row_data["RPK"],
-                    "RPKG": row_data["RPKG"], "RPKPC": row_data["RPKPC"], "RPKPMC": row_data["RPKPMC"]
+                    "#AMR_Gene_Family;ARO": row_data["key"], 
+                    "Read_Count": row_data["Read_Count"],
+                    "Fragment_Count": row_data["Fragment_Count"],
+                    "Gene_Length_bp": row_data["Gene_Length_bp"], 
+                    "RPK": row_data["RPK"], "RPKG": row_data["RPKG"], "RPKPC": row_data["RPKPC"], "RPKPMC": row_data["RPKPMC"],
+                    "FPK": row_data["FPK"], "FPKG": row_data["FPKG"], "FPKPC": row_data["FPKPC"], "FPKPMC": row_data["FPKPMC"]
                 }
                 writer.writerow(row_to_write)
         print(BColors.green(f"--- Successfully wrote report: {output_path} ---"))
@@ -168,7 +205,7 @@ def main():
     )
     parser.add_argument("-i", "--input-files", required=True, help="Comma-delimited list of input `_variant_hits.tsv` files.")
     parser.add_argument("--metadata", required=True, help="Path to the AMR database metadata file (TSV format, must include 'SeqNucLength' column).")
-    parser.add_argument("--uscg-report", required=True, help="Path to the USCG quantification report containing the overall RPK.")
+    parser.add_argument("--uscg-report", required=True, help="Path to the USCG quantification report containing the overall RPK and FPK.")
     parser.add_argument("--total-bases-file", required=True, help="Path to a file containing the total number of bases for RPKG calculation.")
     parser.add_argument("--tmp-dir", default=".", help="Directory to store the output report file. Defaults to the current directory.")
     parser.add_argument("--output-prefix", required=True, help="Prefix for the output summary file (e.g., 'MyProject').")
@@ -193,14 +230,14 @@ def main():
     os.makedirs(args.tmp_dir, exist_ok=True)
     
     aro_to_family, aro_to_length = load_metadata(args.metadata)
-    uscg_rpk = load_uscg_rpk(args.uscg_report)
+    uscg_rpk, uscg_fpk = load_uscg_metrics(args.uscg_report)
     total_bases = load_total_bases(args.total_bases_file)
     
-    final_counts = count_variant_hits(input_files_list, args.pid_cutoff)
-    print(BColors.green(f"--- Aggregated results for {len(final_counts)} unique variants passing filters. ---"))
+    read_counts, fragment_sets = count_variant_hits_and_fragments(input_files_list, args.pid_cutoff)
+    print(BColors.green(f"--- Aggregated results for {len(read_counts)} unique variants passing filters. ---"))
 
     summary_output_path = os.path.join(args.tmp_dir, f"{args.output_prefix}_varscan.tsv")
-    calculate_and_write_summary(final_counts, aro_to_family, aro_to_length, uscg_rpk, total_bases, summary_output_path)
+    calculate_and_write_summary(read_counts, fragment_sets, aro_to_family, aro_to_length, uscg_rpk, uscg_fpk, total_bases, summary_output_path)
     
     print(BColors.green("\n\n--- Variant Tabulation and Normalization Complete ---"))
 

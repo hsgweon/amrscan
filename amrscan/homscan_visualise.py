@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+# amrscan_pipeline/amrscan/homscan_visualise.py
 import argparse
 import os
 import sys
@@ -299,7 +300,6 @@ def generate_main_html_page(family_name, plot_htmls, hits_by_query_id_json, all_
         const readDetailsOverlay = document.getElementById('read-details-overlay');
         const detailsReadIdSpan = document.getElementById('details-read-id');
         const detailsContentDiv = document.getElementById('details-content');
-        const toggleWinnerBtn = document.getElementById('toggleWinnerBtn');
         const body = document.body;
         const RECT_HEIGHT = 8, GAP = 2, TICK_HEIGHT = 5, TICK_LABEL_OFFSET = 12, AXIS_LABEL_OFFSET = 28;
 
@@ -450,8 +450,9 @@ def generate_main_html_page(family_name, plot_htmls, hits_by_query_id_json, all_
                 plot.querySelector('.lateral-coverage-value').textContent = calculateLateralCoverage(Array.from(rects).filter(r => r.style.display !== 'none'), refLength);
             }});
         }}
-
-        if (hasWtaWinners) {{
+        
+        const toggleWinnerBtn = document.getElementById('toggleWinnerBtn');
+        if (toggleWinnerBtn && hasWtaWinners) {{
             toggleWinnerBtn.addEventListener('click', function() {{
                 body.classList.toggle('show-winner-only');
                 if (body.classList.contains('show-winner-only')) {{
@@ -504,7 +505,6 @@ def generate_main_html_page(family_name, plot_htmls, hits_by_query_id_json, all_
         #read-details-box tr:nth-child(even) {{ background-color: #f8f9fa; }}
         #read-details-box .highlight-row {{ background-color: #e6f7ff !important; font-weight: bold; }}
         #read-details-box .wta-winner-label {{ color: #28a745; font-weight: bold; margin-left: 5px; }}
-        .controls {{ margin-bottom: 1.5em; }}
         .controls button {{ background-color: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 1em; transition: background-color 0.2s ease; }}
         .controls button:hover {{ background-color: #0056b3; }}
         .controls button.active {{ background-color: #28a745; }}
@@ -516,9 +516,11 @@ def generate_main_html_page(family_name, plot_htmls, hits_by_query_id_json, all_
 <body>
     <div class="container">
         <h1>Coverage for Gene Family: {html.escape(family_name)}</h1>
+        <!--
         <div class="controls">
             <button id="toggleWinnerBtn" {'disabled' if not has_wta_winners else ''}>{'Show WTA Winners Only' if has_wta_winners else 'No WTA Winners to Filter'}</button>
         </div>
+        -->
         {legend_html}
         <div id="plots-container">{''.join(plot_htmls)}</div>
     </div>
@@ -556,7 +558,7 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # --- Data Loading (Global) ---
+    # --- Data Loading ---
     aro_to_family, family_to_aros = load_metadata(args.metadata)
     all_hits_raw, all_hits_by_query_id = load_all_hits(input_files_list, args.pid_cutoff, args.pid_type, aro_to_family)
     
@@ -597,12 +599,14 @@ def main():
         
         family_hits_by_query_id = defaultdict(list)
         for hit in family_hits_raw:
-            wta_winner_for_read = query_id_to_wta_aro.get(hit['query_id'])
+            # *** FIX IS HERE ***
+            # Provide a default empty string to .get() to prevent None values
+            wta_winner_for_read = query_id_to_wta_aro.get(hit['query_id'], "")
             hit['wta_assigned_aro'] = wta_winner_for_read
             
             simplified_hit = all_hits_by_query_id[hit['query_id']]
             for s_hit in simplified_hit:
-                s_hit['is_wta_winner_for_read'] = (s_hit['ARO_matched'] == wta_winner_for_read)
+                s_hit['is_wta_winner_for_read'] = (s_hit['ARO_matched'] == wta_winner_for_read if wta_winner_for_read else False)
             family_hits_by_query_id[hit['query_id']] = simplified_hit
 
         hits_by_aro_for_plotting = defaultdict(list)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+# amrscan_pipeline/amrscan/scgscan_quantify_from_diamond.py
 import argparse
 import os
 import sys

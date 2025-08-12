@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+# amrscan_pipeline/amrscan/scgscan_map_reads_diamond.py
 import argparse
 import subprocess
 import os

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+# amrscan_pipeline/amrscan/amrscan_map_reads_bwa.py
 import argparse
 import subprocess
 import os
